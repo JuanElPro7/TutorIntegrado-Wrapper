@@ -5,40 +5,155 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import type {
-  MathfieldElement,
-  VirtualKeyboardInterface,
-  VirtualKeyboardLayoutCore,
-  NormalizedVirtualKeyboardLayer,
-} from "mathlive";
+import type { MathfieldElement, VirtualKeyboardInterface } from "mathlive";
 import "mathlive/static.css";
 import { Box } from "@chakra-ui/react";
 import {
+  activateMathVirtualKeyboardViewport,
   activatePromptInput,
   applyPromptOnlyMode,
   collectPromptValues,
+  configureMateoMathKeyboard,
+  deactivateMathVirtualKeyboardViewport,
   getPromptIdFromPoint,
+  getPromptIdFromPointerEvent,
+  isActiveMathVirtualKeyboardViewport,
+  isInteractiveControlEvent,
+  isMathVirtualKeyboardOpen,
   isSelectionInsidePrompt,
   keepSelectionInsidePrompt,
   revealActivePrompt,
   setSafeMathFieldClassName,
 } from "../../../../utils/mathLivePromptGuard";
 
-type ExtendedVirtualKeyboard = VirtualKeyboardInterface & {
-  readonly normalizedLayouts: (VirtualKeyboardLayoutCore & {
-    layers: NormalizedVirtualKeyboardLayer[];
-  })[];
+const ACTIVE_KEYBOARD_CLASS = "word-problem-keyboard-active";
+
+const PROMPT_GEOMETRY_STYLE_ID = "word-problem-prompt-geometry";
+
+const getDesktopPromptCaretOffset = (
+  mfe: MathfieldElement,
+  promptRange: readonly [number, number],
+  x: number,
+  y: number,
+) => {
+  const start = Math.min(promptRange[0], promptRange[1]);
+  const end = Math.max(promptRange[0], promptRange[1]);
+  const candidates = [] as Array<{
+    offset: number;
+    distance: number;
+    depth: number;
+    area: number;
+    centerDistance: number;
+  }>;
+
+  for (let offset = start; offset <= end; offset += 1) {
+    const info = mfe.getElementInfo(offset);
+    const bounds = info?.bounds;
+    if (!bounds || bounds.width <= 0 || bounds.height <= 0) continue;
+
+    const horizontalDistance =
+      x < bounds.left ? bounds.left - x : x > bounds.right ? x - bounds.right : 0;
+    const verticalDistance =
+      y < bounds.top ? bounds.top - y : y > bounds.bottom ? y - bounds.bottom : 0;
+
+    candidates.push({
+      offset,
+      distance: Math.hypot(horizontalDistance, verticalDistance),
+      depth: info.depth ?? 0,
+      area: bounds.width * bounds.height,
+      centerDistance: Math.hypot(
+        x - (bounds.left + bounds.right) / 2,
+        y - (bounds.top + bounds.bottom) / 2,
+      ),
+    });
+  }
+
+  return (
+    candidates.sort(
+      (left, right) =>
+        left.distance - right.distance ||
+        right.depth - left.depth ||
+        left.area - right.area ||
+        left.centerDistance - right.centerDistance,
+    )[0]?.offset ?? end
+  );
+};
+
+const stabilizePromptGeometry = (mfe: MathfieldElement) => {
+  const shadowRoot = mfe.shadowRoot;
+  if (!shadowRoot || shadowRoot.getElementById(PROMPT_GEOMETRY_STYLE_ID)) return;
+
+  const style = document.createElement("style");
+  style.id = PROMPT_GEOMETRY_STYLE_ID;
+  style.textContent = `
+    .ML__prompt-atom {
+      align-items: center !important;
+      background: var(--mathlive-field-prompt-bg) !important;
+      border: 1px solid var(--mathlive-field-prompt-border) !important;
+      border-radius: 4px !important;
+      box-shadow: 0 1px 4px var(--mathlive-field-prompt-shadow) !important;
+      box-sizing: border-box !important;
+      display: inline-flex !important;
+      height: auto !important;
+      justify-content: center !important;
+      line-height: 1 !important;
+      margin-left: 0.12em !important;
+      margin-right: 0.12em !important;
+      min-height: 1.45em !important;
+      min-width: 1.25em !important;
+      overflow: visible !important;
+      padding: 0.04em 0.2em !important;
+      position: relative !important;
+      top: 0 !important;
+      vertical-align: middle !important;
+    }
+
+    .ML__prompt-atom > :not(.ML__prompt) {
+      height: auto !important;
+      line-height: 1 !important;
+      vertical-align: middle !important;
+    }
+
+    .ML__prompt-atom:has(.ML__mfrac) {
+      height: 2.6em !important;
+      min-height: 2.6em !important;
+      min-width: 2.2em !important;
+      padding: 0.2em 0.4em !important;
+    }
+
+    .ML__prompt-atom:has(.ML__mfrac) > :not(.ML__prompt) {
+      font-size: 0.92em !important;
+      line-height: 1 !important;
+      transform: none !important;
+    }
+
+    .ML__prompt-atom .ML__prompt {
+      display: none !important;
+    }
+
+    @media (max-width: 640px) {
+      .ML__prompt-atom:has(.ML__mfrac) {
+        height: 2.35em !important;
+        min-height: 2.35em !important;
+        min-width: 1.95em !important;
+        padding: 0.16em 0.3em !important;
+      }
+
+      .ML__prompt-atom:has(.ML__mfrac) > :not(.ML__prompt) {
+        font-size: 0.86em !important;
+      }
+    }
+
+  `;
+  shadowRoot.append(style);
 };
 
 const getMathVirtualKeyboard = () =>
-  (window as Window & {
-    mathVirtualKeyboard?: VirtualKeyboardInterface;
-  }).mathVirtualKeyboard;
-
-const isMathVirtualKeyboardVisible = () =>
-  Boolean(
-    getMathVirtualKeyboard()?.visible || document.querySelector("body > .ML__keyboard.is-visible"),
-  );
+  (
+    window as Window & {
+      mathVirtualKeyboard?: VirtualKeyboardInterface;
+    }
+  ).mathVirtualKeyboard;
 
 const isVirtualKeyboardToggleTarget = (event: PointerEvent) =>
   event.composedPath().some(target => {
@@ -53,7 +168,7 @@ const isVirtualKeyboardToggleTarget = (event: PointerEvent) =>
     );
   });
 
-const isMathVirtualKeyboardTarget = (event: PointerEvent) =>
+const isMathVirtualKeyboardTarget = (event: Event) =>
   event.composedPath().some(target => {
     if (!(target instanceof Element)) return false;
     return Boolean(target.closest(".ML__keyboard"));
@@ -78,10 +193,27 @@ const Mathfield = (props: MathEditorProps) => {
   const [mfe, setMfe] = useState<MathfieldElement | null>(null);
   const onChangeRef = useRef(props.onChange);
   const onMountRef = useRef(props.onMount);
+  const mathFieldClassName = [
+    props.className,
+    (props.value?.length ?? 0) > 42 ? "word-problem-math-field-long" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const revealCurrentPrompt = () => {
+    const activeMfe = mfeRef.current;
+    if (!activeMfe) return;
+
+    revealActivePrompt(activeMfe);
+    window.setTimeout(() => revealActivePrompt(activeMfe), 180);
+    window.setTimeout(() => revealActivePrompt(activeMfe), 420);
+  };
 
   const hideKeyboard = () => {
+    if (!isActiveMathVirtualKeyboardViewport(ACTIVE_KEYBOARD_CLASS, wrapperRef.current)) return;
+
     suppressKeyboardOpenUntil.current = Date.now() + 900;
-    document.body.classList.remove("word-problem-keyboard-active");
+    deactivateMathVirtualKeyboardViewport(ACTIVE_KEYBOARD_CLASS, wrapperRef.current);
     mfeRef.current?.executeCommand("hideVirtualKeyboard");
     getMathVirtualKeyboard()?.hide({ animate: true });
 
@@ -101,15 +233,21 @@ const Mathfield = (props: MathEditorProps) => {
     if (!activeMfe) return;
 
     suppressKeyboardOpenUntil.current = Date.now() + 120;
-    document.body.classList.add("word-problem-keyboard-active");
+    if (wrapperRef.current) {
+      activateMathVirtualKeyboardViewport(ACTIVE_KEYBOARD_CLASS, wrapperRef.current);
+    }
     activatePromptInput(activeMfe, promptId);
+    revealCurrentPrompt();
   };
 
   const handleKeyboardButtonPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
 
-    if (isMathVirtualKeyboardVisible()) {
+    if (
+      isMathVirtualKeyboardOpen(ACTIVE_KEYBOARD_CLASS) &&
+      isActiveMathVirtualKeyboardViewport(ACTIVE_KEYBOARD_CLASS, wrapperRef.current)
+    ) {
       hideKeyboard();
     } else {
       openKeyboard();
@@ -147,7 +285,9 @@ const Mathfield = (props: MathEditorProps) => {
   useEffect(() => {
     if (!mfe) return;
     const container = containerRef.current!;
+    const keyboardAnchor = wrapperRef.current;
     container.replaceChildren(mfe);
+    stabilizePromptGeometry(mfe);
     onMountRef.current?.(mfe);
 
     mfe.mathVirtualKeyboardPolicy = "manual";
@@ -159,18 +299,7 @@ const Mathfield = (props: MathEditorProps) => {
     currentValue.current = props.value ?? "";
     lastPropValue.current = props.value ?? "";
 
-    // teclado virtual: proteger contra cambios de índices entre versiones
-    const vk = (window as any).mathVirtualKeyboard as ExtendedVirtualKeyboard | undefined;
-    if (vk?.normalizedLayouts?.[0]) {
-      const layout = vk.normalizedLayouts[0];
-      const row = layout.layers?.[0]?.rows?.[2];
-      const key = row?.[10];
-      if (key && "shift" in (key as any)) {
-        // @ts-ignore
-        delete (key as any).shift;
-      }
-      (window as any).mathVirtualKeyboard.layouts = layout;
-    }
+    configureMateoMathKeyboard();
 
     const schedulePromptSelectionGuard = () => {
       if (restoringPromptSelection.current) return;
@@ -222,7 +351,10 @@ const Mathfield = (props: MathEditorProps) => {
         ev.preventDefault();
         ev.stopPropagation();
         ev.stopImmediatePropagation();
-        if (isMathVirtualKeyboardVisible()) {
+        if (
+          isMathVirtualKeyboardOpen(ACTIVE_KEYBOARD_CLASS) &&
+          isActiveMathVirtualKeyboardViewport(ACTIVE_KEYBOARD_CLASS, wrapperRef.current)
+        ) {
           hideKeyboard();
         } else {
           openKeyboard();
@@ -230,9 +362,47 @@ const Mathfield = (props: MathEditorProps) => {
         return;
       }
 
-      const promptId = getPromptIdFromPoint(mfe, ev.clientX, ev.clientY);
+      const isDesktopMouse =
+        ev.pointerType === "mouse" && window.matchMedia("(pointer: fine)").matches;
+      const promptId = isDesktopMouse
+        ? (getPromptIdFromPoint(mfe, ev.clientX, ev.clientY) ??
+          getPromptIdFromPointerEvent(mfe, ev))
+        : (getPromptIdFromPointerEvent(mfe, ev) ??
+          getPromptIdFromPoint(mfe, ev.clientX, ev.clientY));
 
       if (promptId) {
+        if (isDesktopMouse) {
+          const promptRange = mfe.getPromptRange(promptId);
+          const promptContainsFraction = /\\(?:d|t)?frac\b/.test(mfe.getPromptValue(promptId));
+
+          if (promptContainsFraction) {
+            mfe.style.setProperty("--contains-highlight-background-color", "transparent");
+          } else {
+            mfe.style.removeProperty("--contains-highlight-background-color");
+          }
+
+          ev.preventDefault();
+
+          if (promptRange) {
+            const caretPosition = getDesktopPromptCaretOffset(
+              mfe,
+              promptRange,
+              ev.clientX,
+              ev.clientY,
+            );
+
+            mfe.focus();
+            mfe.selection = {
+              ranges: [[caretPosition, caretPosition]],
+              direction: "none",
+            };
+            requestAnimationFrame(() => openKeyboard());
+          } else {
+            openKeyboard(promptId);
+          }
+          return;
+        }
+
         ev.preventDefault();
         openKeyboard(promptId);
         return;
@@ -252,22 +422,51 @@ const Mathfield = (props: MathEditorProps) => {
       schedulePromptSelectionGuard();
       requestAnimationFrame(() => {
         if (isKeyboardOpenSuppressed()) {
-          if (!isMathVirtualKeyboardVisible()) {
-            document.body.classList.remove("word-problem-keyboard-active");
+          if (!isMathVirtualKeyboardOpen(ACTIVE_KEYBOARD_CLASS)) {
+            deactivateMathVirtualKeyboardViewport(ACTIVE_KEYBOARD_CLASS, wrapperRef.current);
           }
           return;
         }
-        document.body.classList.add("word-problem-keyboard-active");
+        if (wrapperRef.current) {
+          activateMathVirtualKeyboardViewport(ACTIVE_KEYBOARD_CLASS, wrapperRef.current);
+        }
         activatePromptInput(mfe);
       });
     };
 
     const onDocumentPointerDown = (ev: PointerEvent) => {
-      if (!isMathVirtualKeyboardVisible()) return;
+      if (!isMathVirtualKeyboardOpen(ACTIVE_KEYBOARD_CLASS)) return;
+      if (!isActiveMathVirtualKeyboardViewport(ACTIVE_KEYBOARD_CLASS, wrapperRef.current)) return;
       if (wrapperRef.current && ev.composedPath().includes(wrapperRef.current)) return;
       if (isMathVirtualKeyboardTarget(ev)) return;
+      if (isInteractiveControlEvent(ev)) return;
 
       hideKeyboard();
+    };
+
+    const onDocumentClick = (ev: MouseEvent) => {
+      if (!isMathVirtualKeyboardOpen(ACTIVE_KEYBOARD_CLASS)) return;
+      if (!isActiveMathVirtualKeyboardViewport(ACTIVE_KEYBOARD_CLASS, wrapperRef.current)) return;
+      if (wrapperRef.current && ev.composedPath().includes(wrapperRef.current)) return;
+      if (isMathVirtualKeyboardTarget(ev)) return;
+      if (!isInteractiveControlEvent(ev)) return;
+
+      hideKeyboard();
+    };
+
+    const closeKeyboardForNavigation = () => {
+      if (!isActiveMathVirtualKeyboardViewport(ACTIVE_KEYBOARD_CLASS, keyboardAnchor)) return;
+
+      suppressKeyboardOpenUntil.current = Date.now() + 900;
+      mfe.blur();
+      mfe.executeCommand("hideVirtualKeyboard");
+      getMathVirtualKeyboard()?.hide({ animate: false });
+      deactivateMathVirtualKeyboardViewport(ACTIVE_KEYBOARD_CLASS, keyboardAnchor);
+
+      requestAnimationFrame(() => {
+        mfe.executeCommand("hideVirtualKeyboard");
+        getMathVirtualKeyboard()?.hide({ animate: false });
+      });
     };
 
     mfe.addEventListener("keydown", onKey, { capture: true });
@@ -277,6 +476,8 @@ const Mathfield = (props: MathEditorProps) => {
     mfe.addEventListener("selection-change", onSelectionChange);
     mfe.addEventListener("focus", onFocus);
     document.addEventListener("pointerdown", onDocumentPointerDown, { capture: true });
+    document.addEventListener("click", onDocumentClick, { capture: true });
+    window.addEventListener("popstate", closeKeyboardForNavigation);
 
     onChangeRef.current(props.value ?? "", collectPromptValues(mfe));
 
@@ -291,15 +492,19 @@ const Mathfield = (props: MathEditorProps) => {
       document.removeEventListener("pointerdown", onDocumentPointerDown, {
         capture: true,
       } as EventListenerOptions);
-      document.body.classList.remove("word-problem-keyboard-active");
+      document.removeEventListener("click", onDocumentClick, {
+        capture: true,
+      } as EventListenerOptions);
+      window.removeEventListener("popstate", closeKeyboardForNavigation);
+      closeKeyboardForNavigation();
     };
   }, [mfe]);
 
   useEffect(() => {
     if (!mfe) return;
-    setSafeMathFieldClassName(mfe, props.className);
+    setSafeMathFieldClassName(mfe, mathFieldClassName);
     applyPromptOnlyMode(mfe, props.readOnly);
-  }, [mfe, props.className, props.readOnly]);
+  }, [mathFieldClassName, mfe, props.readOnly]);
 
   // actualiza cuando cambie props.value
   useEffect(() => {
@@ -326,7 +531,7 @@ const Mathfield = (props: MathEditorProps) => {
     if (!mfe) return;
     if (event.target === containerRef.current) {
       event.preventDefault();
-      document.body.classList.add("word-problem-keyboard-active");
+      activateMathVirtualKeyboardViewport(ACTIVE_KEYBOARD_CLASS, wrapperRef.current);
       activatePromptInput(mfe);
     }
   };
@@ -334,7 +539,11 @@ const Mathfield = (props: MathEditorProps) => {
   return (
     <Box
       ref={wrapperRef}
-      position="relative"
+      className="word-problem-math-editor"
+      display="grid"
+      gridTemplateColumns="minmax(0, 1fr) auto"
+      alignItems="center"
+      gap="2"
       borderWidth="1px"
       borderRadius="md"
       borderColor="black"
@@ -342,9 +551,8 @@ const Mathfield = (props: MathEditorProps) => {
       maxW="100%"
       marginX="auto"
       padding="2"
-      paddingRight="3.25rem"
       overflow="hidden"
-      minH="58px"
+      minH="76px"
       cursor="text"
     >
       <Box
@@ -352,10 +560,11 @@ const Mathfield = (props: MathEditorProps) => {
         onPointerDown={handleContainerPointerDown}
         width="100%"
         maxW="100%"
+        minW="0"
         overflowX="auto"
-        overflowY="hidden"
-        minH="48px"
-        paddingRight="0.35rem"
+        overflowY="visible"
+        minH="62px"
+        paddingY="0.35rem"
         style={{ WebkitOverflowScrolling: "touch" }}
       />
       <button

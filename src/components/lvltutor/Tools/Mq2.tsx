@@ -16,7 +16,6 @@ import { useSnapshot } from "valtio";
 import MQProxy from "./MQProxy";
 import MQPostfixstrict from "../../../utils/MQPostfixstrict";
 import MQStaticMathField from "../../../utils/MQStaticMathField";
-import type { NormalizedMathpixResponse } from "../../whiteboard/mathpixClient";
 import { MathPixBoard } from "../../whiteboard/MathPixBoard";
 import { isWrapper } from "../../../utils/auth0Platform";
 import {
@@ -286,7 +285,8 @@ const Mq2 = ({
   };
 
   const handleBoardCapture = (capturedMathpix: NormalizedMathpixResponse) => {
-    let capturedLatex = capturedMathpix.text || capturedMathpix.latex_styled || capturedMathpix.latex || "";
+    let capturedLatex =
+      capturedMathpix.text || capturedMathpix.latex_styled || capturedMathpix.latex || "";
 
     try {
       const lastExpression = capturedMathpix.expressions?.[capturedMathpix.expressions.length - 1];
@@ -482,8 +482,7 @@ const Mq2 = ({
                     <MQStaticMathField
                       exp={"x^y"}
                       currentExpIndex={
-                        parseInt(step.stepId) ==
-                        mqSnap.defaultIndex[mqSnap.defaultIndex.length - 1]
+                        parseInt(step.stepId) == mqSnap.defaultIndex[mqSnap.defaultIndex.length - 1]
                           ? true
                           : false
                       }
@@ -501,8 +500,7 @@ const Mq2 = ({
                     <MQStaticMathField
                       exp={"\\sqrt{x}"}
                       currentExpIndex={
-                        parseInt(step.stepId) ==
-                        mqSnap.defaultIndex[mqSnap.defaultIndex.length - 1]
+                        parseInt(step.stepId) == mqSnap.defaultIndex[mqSnap.defaultIndex.length - 1]
                           ? true
                           : false
                       }
@@ -520,8 +518,7 @@ const Mq2 = ({
                     <MQStaticMathField
                       exp={"\\sqrt[y]{x}"}
                       currentExpIndex={
-                        parseInt(step.stepId) ==
-                        mqSnap.defaultIndex[mqSnap.defaultIndex.length - 1]
+                        parseInt(step.stepId) == mqSnap.defaultIndex[mqSnap.defaultIndex.length - 1]
                           ? true
                           : false
                       }

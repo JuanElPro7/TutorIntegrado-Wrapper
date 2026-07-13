@@ -446,7 +446,7 @@ const Mq2 = ({
           <Box position="relative">
             <HStack gap={6} alignItems="center" justifyContent="center" pb={4}>
               <VStack gap={4} alignItems="center">
-                <Stack gap={4} direction="row" align="center">
+                <Stack gap={{ base: 2, md: 4 }} direction="row" align="center">
                   {/*importante la distincion de onMouseDown vs onClick, con el evento onMouseDown aun no se pierde el foco del input*/}
                   <Button
                     width={"40px"}

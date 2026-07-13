@@ -525,7 +525,7 @@ const Mq2 = ({
                     />
                   </Button>
                 </Stack>
-                <Stack gap={4} direction="row" align="center">
+                <Stack gap={{ base: 2, md: 4 }} direction="row" align="center">
                   {/*importante la distincion de onMouseDown vs onClick, con el evento onMouseDown aun no se pierde el foco del input,
                                Ademas con mousedown se puede usar preventDefault*/}
                   <Button
@@ -583,6 +583,23 @@ const Mq2 = ({
                   >
                     C
                   </Button>
+                  {canUseHwBoard ? (
+                    <Button
+                      width={"40px"}
+                      height={"40px"}
+                      bg="gray.900"
+                      color="white"
+                      borderRadius="md"
+                      aria-label="Abrir pizarra"
+                      display={{ base: "inline-flex", md: "none" }}
+                      onMouseDown={e => {
+                        e.preventDefault();
+                      }}
+                      onClick={handleOpenBoard}
+                    >
+                      <FaPencilAlt />
+                    </Button>
+                  ) : null}
                 </Stack>
               </VStack>
             </HStack>
@@ -595,7 +612,8 @@ const Mq2 = ({
                 borderRadius="md"
                 aria-label="Abrir pizarra"
                 position="absolute"
-                right={{ base: "8px", md: "-52px" }}
+                display={{ base: "none", md: "inline-flex" }}
+                right="-52px"
                 top="8px"
                 zIndex={1}
                 onClick={handleOpenBoard}

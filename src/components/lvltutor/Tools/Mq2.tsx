@@ -524,6 +524,23 @@ const Mq2 = ({
                       }
                     />
                   </Button>
+                  {canUseHwBoard ? (
+                    <Button
+                      width={"40px"}
+                      height={"40px"}
+                      bg="gray.900"
+                      color="white"
+                      borderRadius="md"
+                      aria-label="Abrir pizarra"
+                      display={{ base: "inline-flex", md: "none" }}
+                      onMouseDown={e => {
+                        e.preventDefault();
+                      }}
+                      onClick={handleOpenBoard}
+                    >
+                      <FaPencilAlt />
+                    </Button>
+                  ) : null}
                 </Stack>
                 <Stack gap={{ base: 2, md: 4 }} direction="row" align="center">
                   {/*importante la distincion de onMouseDown vs onClick, con el evento onMouseDown aun no se pierde el foco del input,
@@ -583,21 +600,22 @@ const Mq2 = ({
                   >
                     C
                   </Button>
-                  {canUseHwBoard ? (
+                  {canUseCamera ? (
                     <Button
                       width={"40px"}
                       height={"40px"}
-                      bg="gray.900"
-                      color="white"
-                      borderRadius="md"
-                      aria-label="Abrir pizarra"
+                      colorPalette="teal"
+                      aria-label="Tomar foto de la respuesta"
                       display={{ base: "inline-flex", md: "none" }}
                       onMouseDown={e => {
                         e.preventDefault();
                       }}
-                      onClick={handleOpenBoard}
+                      onClick={() => {
+                        void openCameraCapture();
+                      }}
+                      loading={isCameraProcessing}
                     >
-                      <FaPencilAlt />
+                      <FaCamera />
                     </Button>
                   ) : null}
                 </Stack>
@@ -692,6 +710,7 @@ const Mq2 = ({
                 <Button
                   aria-label="Tomar foto de la respuesta"
                   colorPalette="teal"
+                  display={{ base: "none", md: "inline-flex" }}
                   onMouseDown={e => {
                     e.preventDefault();
                   }}
